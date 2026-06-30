@@ -108,65 +108,75 @@ def _finmind_foreign_flow():
     }
 
 
-def _ndc_cycle():
-    """景氣燈號 — NDC POST /n/json/lightscore
-    使用 cloudscraper 繞過 Cloudflare Bot Management，相容雲端伺服器"""
+_NDC_FILE = os.path.join(os.path.dirname(__file__), "ndc_data.json")
+
+def _ndc_from_file():
+    """讀取本地 ndc_data.json 作為備份資料"""
+    try:
+        import json as _json
+        with open(_NDC_FILE, encoding="utf-8") as f:
+            return _json.load(f)
+    except Exception:
+        return None
+
+def _ndc_from_api():
+    """從 NDC API 取得最新景氣燈號（需要 Cloudflare bypass）"""
     NDC_HOME = "https://index.ndc.gov.tw/n/zh_tw"
     NDC_API  = "https://index.ndc.gov.tw/n/json/lightscore"
-
-    for attempt in range(3):
+    try:
+        scraper = cloudscraper.create_scraper()
+        r0 = scraper.get(NDC_HOME, timeout=25)
+        csrf = re.search(r'name="csrf-token"\s+content="([^"]+)"', r0.text)
+        if not csrf:
+            return None
+        r = scraper.post(NDC_API, data="",
+            headers={"X-CSRF-TOKEN": csrf.group(1),
+                     "X-Requested-With": "XMLHttpRequest",
+                     "Referer": NDC_HOME,
+                     "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                     "Accept": "application/json, text/javascript, */*; q=0.01"},
+            timeout=25)
+        if r.status_code != 200 or "application/json" not in r.headers.get("Content-Type",""):
+            return None
+        data = r.json()
+        line = data.get("line", [])
+        if not line:
+            return None
+        latest = line[-1]
+        score  = int(latest["y"])
+        yyyymm = str(latest["x"])
+        if   score <= 16: light = "blue"
+        elif score <= 22: light = "yellow"
+        elif score <= 31: light = "green"
+        elif score <= 37: light = "yellow_red"
+        else:             light = "red"
+        labels = {"red":"紅燈","yellow_red":"黃紅燈",
+                  "green":"綠燈","yellow":"黃藍燈","blue":"藍燈"}
+        result = {
+            "score": score, "light": light, "label": labels[light],
+            "bearish": light in ("yellow","blue"),
+            "date": f"{yyyymm[:4]}-{yyyymm[4:]}",
+            "history": [{"ym": x["x"], "score": int(x["y"])} for x in line[-12:]],
+        }
+        # 成功時更新本地檔案
         try:
-            scraper = cloudscraper.create_scraper()
-            r0 = scraper.get(NDC_HOME, timeout=25)
-            csrf = re.search(r'name="csrf-token"\s+content="([^"]+)"', r0.text)
-            if not csrf:
-                continue
-            csrf_token = csrf.group(1)
+            import json as _json
+            with open(_NDC_FILE, "w", encoding="utf-8") as f:
+                _json.dump(result, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+        return result
+    except Exception as e:
+        print(f"NDC API: {e}")
+        return None
 
-            r = scraper.post(
-                NDC_API, data="",
-                headers={
-                    "X-CSRF-TOKEN": csrf_token,
-                    "X-Requested-With": "XMLHttpRequest",
-                    "Referer": NDC_HOME,
-                    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                    "Accept": "application/json, text/javascript, */*; q=0.01",
-                },
-                timeout=25,
-            )
-            if r.status_code != 200:
-                continue
-            if "application/json" not in r.headers.get("Content-Type", ""):
-                continue
-
-            data = r.json()
-            line = data.get("line", [])
-            if not line:
-                continue
-
-            latest   = line[-1]
-            score    = int(latest["y"])
-            yyyymm   = str(latest["x"])
-            date_str = f"{yyyymm[:4]}-{yyyymm[4:]}"
-
-            if   score <= 16: light = "blue"
-            elif score <= 22: light = "yellow"
-            elif score <= 31: light = "green"
-            elif score <= 37: light = "yellow_red"
-            else:             light = "red"
-
-            labels = {"red":"紅燈","yellow_red":"黃紅燈",
-                      "green":"綠燈","yellow":"黃藍燈","blue":"藍燈"}
-            history = [{"ym": x["x"], "score": int(x["y"])} for x in line[-12:]]
-
-            return {
-                "score": score, "light": light, "label": labels[light],
-                "bearish": light in ("yellow", "blue"),
-                "date": date_str, "history": history,
-            }
-        except Exception as e:
-            print(f"NDC attempt {attempt+1}: {e}")
-    return None
+def _ndc_cycle():
+    """景氣燈號：優先 API，失敗時讀 ndc_data.json（每月手動更新）"""
+    result = _ndc_from_api()
+    if result:
+        return result
+    print("NDC API failed, using local ndc_data.json")
+    return _ndc_from_file()
 
 
 def _m1b_m2():
