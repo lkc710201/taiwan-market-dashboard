@@ -109,64 +109,61 @@ def _finmind_foreign_flow():
 
 
 def _ndc_cycle():
-    """景氣燈號 — NDC POST /n/json/lightscore (CSRF required)"""
-    try:
-        session = requests.Session()
-        r0 = session.get("https://index.ndc.gov.tw/n/zh_tw", headers=HDR, timeout=10)
-        csrf = re.search(r'name="csrf-token"\s+content="([^"]+)"', r0.text)
-        csrf_token = csrf.group(1) if csrf else ""
+    """景氣燈號 — NDC POST /n/json/lightscore (CSRF required, verify=False for cloud)"""
+    NDC_HOME = "https://index.ndc.gov.tw/n/zh_tw"
+    NDC_API  = "https://index.ndc.gov.tw/n/json/lightscore"
 
-        r = session.post(
-            "https://index.ndc.gov.tw/n/json/lightscore",
-            data="",
-            headers={
-                **HDR,
-                "X-CSRF-TOKEN": csrf_token,
-                "X-Requested-With": "XMLHttpRequest",
-                "Referer": "https://index.ndc.gov.tw/n/zh_tw",
-                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                "Accept": "application/json, text/javascript, */*; q=0.01",
-            },
-            timeout=10,
-        )
-        if r.status_code != 200:
-            return None
+    for attempt in range(3):
+        try:
+            session = requests.Session()
+            session.verify = False
+            r0 = session.get(NDC_HOME, headers=HDR, timeout=20)
+            csrf = re.search(r'name="csrf-token"\s+content="([^"]+)"', r0.text)
+            csrf_token = csrf.group(1) if csrf else ""
 
-        data = r.json()
-        line = data.get("line", [])
-        if not line:
-            return None
+            r = session.post(
+                NDC_API, data="",
+                headers={
+                    **HDR,
+                    "X-CSRF-TOKEN": csrf_token,
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Referer": NDC_HOME,
+                    "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                    "Accept": "application/json, text/javascript, */*; q=0.01",
+                },
+                timeout=20,
+            )
+            if r.status_code != 200:
+                continue
 
-        latest   = line[-1]
-        score    = int(latest["y"])
-        yyyymm   = str(latest["x"])
-        date_str = f"{yyyymm[:4]}-{yyyymm[4:]}"
+            data = r.json()
+            line = data.get("line", [])
+            if not line:
+                continue
 
-        # NDC scoring: ≤16→藍, ≤22→黃藍, ≤31→綠, ≤37→黃紅, >37→紅
-        if   score <= 16: light = "blue"
-        elif score <= 22: light = "yellow"
-        elif score <= 31: light = "green"
-        elif score <= 37: light = "yellow_red"
-        else:             light = "red"
+            latest   = line[-1]
+            score    = int(latest["y"])
+            yyyymm   = str(latest["x"])
+            date_str = f"{yyyymm[:4]}-{yyyymm[4:]}"
 
-        labels = {
-            "red": "紅燈", "yellow_red": "黃紅燈",
-            "green": "綠燈", "yellow": "黃藍燈", "blue": "藍燈",
-        }
-        # History for mini-chart
-        history = [{"ym": x["x"], "score": int(x["y"])} for x in line[-12:]]
+            if   score <= 16: light = "blue"
+            elif score <= 22: light = "yellow"
+            elif score <= 31: light = "green"
+            elif score <= 37: light = "yellow_red"
+            else:             light = "red"
 
-        return {
-            "score":   score,
-            "light":   light,
-            "label":   labels[light],
-            "bearish": light in ("yellow", "blue"),
-            "date":    date_str,
-            "history": history,
-        }
-    except Exception as e:
-        print(f"NDC: {e}")
-        return None
+            labels = {"red":"紅燈","yellow_red":"黃紅燈",
+                      "green":"綠燈","yellow":"黃藍燈","blue":"藍燈"}
+            history = [{"ym": x["x"], "score": int(x["y"])} for x in line[-12:]]
+
+            return {
+                "score": score, "light": light, "label": labels[light],
+                "bearish": light in ("yellow", "blue"),
+                "date": date_str, "history": history,
+            }
+        except Exception as e:
+            print(f"NDC attempt {attempt+1}: {e}")
+    return None
 
 
 def _m1b_m2():
