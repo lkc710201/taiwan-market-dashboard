@@ -4,3 +4,4 @@ yfinance
 pandas
 requests
 lxml
+cloudscraper

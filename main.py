@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 import yfinance as yf
 import pandas as pd
 import requests, re, time, os, asyncio
+import cloudscraper
 from datetime import datetime, timedelta
 
 _cache: dict = {}
@@ -109,38 +110,34 @@ def _finmind_foreign_flow():
 
 def _ndc_cycle():
     """景氣燈號 — NDC POST /n/json/lightscore
-    不使用 Session；改用顯式 cookies 傳遞，相容 Cloudflare + 海外伺服器"""
+    使用 cloudscraper 繞過 Cloudflare Bot Management，相容雲端伺服器"""
     NDC_HOME = "https://index.ndc.gov.tw/n/zh_tw"
     NDC_API  = "https://index.ndc.gov.tw/n/json/lightscore"
 
     for attempt in range(3):
         try:
-            # Step 1: GET home page → CSRF token + cookies
-            r0 = requests.get(NDC_HOME, headers=HDR, verify=False, timeout=25)
+            scraper = cloudscraper.create_scraper()
+            r0 = scraper.get(NDC_HOME, timeout=25)
             csrf = re.search(r'name="csrf-token"\s+content="([^"]+)"', r0.text)
             if not csrf:
                 continue
             csrf_token = csrf.group(1)
-            cookies = dict(r0.cookies)  # capture all Cloudflare + session cookies
 
-            # Step 2: POST with explicit cookies (not Session)
-            r = requests.post(
+            r = scraper.post(
                 NDC_API, data="",
                 headers={
-                    **HDR,
                     "X-CSRF-TOKEN": csrf_token,
                     "X-Requested-With": "XMLHttpRequest",
                     "Referer": NDC_HOME,
                     "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                     "Accept": "application/json, text/javascript, */*; q=0.01",
                 },
-                cookies=cookies,
-                verify=False, timeout=25,
+                timeout=25,
             )
             if r.status_code != 200:
                 continue
             if "application/json" not in r.headers.get("Content-Type", ""):
-                continue  # got HTML instead of JSON → retry
+                continue
 
             data = r.json()
             line = data.get("line", [])
