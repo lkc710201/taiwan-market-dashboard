@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>台股空頭訊號監控</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  body { background:#080e1c; font-family:'Segoe UI',system-ui,sans-serif; }
+  .card { background:#0d1526; border:1px solid #1a2a42; border-radius:12px; }
+  .ticker { font-size:.65rem; padding:2px 7px; border-radius:4px; background:#0e2040; color:#60a5fa; font-family:monospace; }
+  .ind-card { transition:transform .18s,box-shadow .18s; }
+  .ind-card:hover { transform:translateY(-2px); box-shadow:0 8px 28px rgba(0,0,0,.5); }
+  .pulse-r { animation:pulseR 2s infinite; }
+  @keyframes pulseR {
+    0%,100% { box-shadow:0 0 0 0 rgba(239,68,68,.35); }
+    50%      { box-shadow:0 0 0 8px rgba(239,68,68,0); }
+  }
+  .bar-track { height:6px; border-radius:3px; background:#1a2a42; }
+  .bar-fill  { height:100%; border-radius:3px; transition:width .6s,background .6s; }
+  ::-webkit-scrollbar { width:5px; height:5px; }
+  ::-webkit-scrollbar-track { background:#0d1526; }
+  ::-webkit-scrollbar-thumb { background:#1a2a42; border-radius:3px; }
+  .ndc-circle { width:52px;height:52px;border-radius:50%;display:flex;align-items:center;
+                justify-content:center;font-size:1.35rem;border:2px solid transparent; }
+  .input-box { background:#0e2040; border:1px solid #1a2a42; border-radius:6px;
+               color:#e2e8f0; padding:4px 8px; font-size:.8rem; width:80px; }
+  .input-box:focus { outline:none; border-color:#3b82f6; }
+  .btn-sm { padding:3px 10px; border-radius:5px; font-size:.75rem; cursor:pointer;
+            background:#1e3a5f; color:#93c5fd; border:1px solid #2a4f7a; transition:.15s; }
+  .btn-sm:hover { background:#2a4f7a; }
+</style>
+</head>
+<body class="min-h-screen text-slate-200 p-4 md:p-6">
+<div class="max-w-7xl mx-auto">
+
+  <!-- ── Header ── -->
+  <div class="flex flex-wrap items-start justify-between mb-5 gap-3">
+    <div>
+      <h1 class="text-2xl font-bold text-white">台股空頭訊號監控</h1>
+      <p class="text-slate-400 text-sm mt-0.5">季線乖離率 &lt; 0% 量化／質化領先指標 · 7大指標即時追蹤</p>
+    </div>
+    <div class="text-right">
+      <div id="update-time" class="text-slate-500 text-xs">載入中…</div>
+      <div class="text-blue-500 text-xs mt-0.5">⟳ 5分鐘自動刷新</div>
+      <button onclick="loadData(true)"
+        class="mt-1 px-3 py-1 bg-blue-700 hover:bg-blue-600 text-white text-xs rounded-md transition">
+        立即更新
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Signal Score ── -->
+  <div class="card p-5 mb-5">
+    <div class="flex flex-wrap items-center gap-6">
+      <div>
+        <div class="text-slate-400 text-xs mb-1">空頭訊號強度</div>
+        <div id="score-count" class="text-4xl font-extrabold text-white">--/7</div>
+        <div id="score-label" class="text-sm mt-1 text-slate-400">載入中…</div>
+      </div>
+      <div class="flex-1 min-w-[160px]">
+        <div class="bar-track">
+          <div id="bar-fill" class="bar-fill bg-slate-600" style="width:0%"></div>
+        </div>
+        <div class="flex justify-between text-xs text-slate-600 mt-1">
+          <span>多頭</span><span>中性</span><span>空頭</span>
+        </div>
+      </div>
+      <div id="score-icon" class="text-5xl select-none">⏳</div>
+    </div>
+  </div>
+
+  <!-- ── TWII + SOX ── -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+
+    <!-- TWII -->
+    <div class="card p-5 ind-card lg:col-span-2">
+      <div class="flex items-start justify-between mb-4">
+        <div><span class="ticker">^TWII</span>
+          <div class="text-slate-300 text-sm mt-1">台灣加權指數</div></div>
+        <div id="twii-badge" class="px-3 py-1 rounded-full text-xs font-semibold bg-slate-700 text-slate-300">載入中</div>
+      </div>
+      <div class="grid grid-cols-3 gap-3 mb-4">
+        <div>
+          <div class="text-slate-500 text-xs">指數</div>
+          <div id="twii-price" class="text-3xl font-bold text-white">--</div>
+          <div id="twii-chg" class="text-xs mt-0.5 text-slate-400">--</div>
+        </div>
+        <div>
+          <div class="text-slate-500 text-xs">季線 (60MA)</div>
+          <div id="twii-ma" class="text-xl font-semibold text-slate-200">--</div>
+        </div>
+        <div>
+          <div class="text-slate-500 text-xs">季線乖離率</div>
+          <div id="twii-dev" class="text-3xl font-bold text-slate-300">--</div>
+          <div id="twii-slope" class="text-xs mt-0.5 text-slate-500">MA斜率 --</div>
+        </div>
+      </div>
+      <div style="position:relative;height:185px"><canvas id="twii-chart"></canvas></div>
+    </div>
+
+    <!-- SOX -->
+    <div class="card p-5 ind-card">
+      <div class="flex items-start justify-between mb-3">
+        <div><span class="ticker">^SOX</span>
+          <div class="text-slate-300 text-sm mt-1">費城半導體</div></div>
+        <div id="sox-badge" class="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-700 text-slate-300">載入中</div>
+      </div>
+      <div class="mb-3">
+        <div class="text-slate-500 text-xs">指數</div>
+        <div id="sox-price" class="text-2xl font-bold text-white">--</div>
+        <div id="sox-chg" class="text-xs text-slate-400">--</div>
+      </div>
+      <div class="grid grid-cols-2 gap-2 mb-3">
+        <div><div class="text-slate-500 text-xs">季線</div>
+             <div id="sox-ma" class="font-semibold text-slate-200">--</div></div>
+        <div><div class="text-slate-500 text-xs">季線乖離率</div>
+             <div id="sox-dev" class="font-bold text-slate-300">--</div></div>
+      </div>
+      <div style="position:relative;height:148px"><canvas id="sox-chart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- ── 4 Small Cards ── -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+
+    <!-- DXY -->
+    <div class="card p-4 ind-card">
+      <div class="flex items-center justify-between mb-1">
+        <span class="ticker">DXY</span>
+        <span id="dxy-dot" class="w-2 h-2 rounded-full bg-slate-500"></span>
+      </div>
+      <div class="text-slate-400 text-xs">美元指數</div>
+      <div id="dxy-price" class="text-xl font-bold text-white mt-1">--</div>
+      <div id="dxy-chg" class="text-xs text-slate-400">--</div>
+      <div class="mt-2 text-slate-600 text-xs">空頭條件 DXY &gt; 104</div>
+      <div id="dxy-sig" class="text-xs font-semibold mt-1 text-slate-400">--</div>
+    </div>
+
+    <!-- US10Y -->
+    <div class="card p-4 ind-card">
+      <div class="flex items-center justify-between mb-1">
+        <span class="ticker">^TNX</span>
+        <span id="us10y-dot" class="w-2 h-2 rounded-full bg-slate-500"></span>
+      </div>
+      <div class="text-slate-400 text-xs">美債10年殖利率</div>
+      <div id="us10y-price" class="text-xl font-bold text-white mt-1">--</div>
+      <div id="us10y-chg" class="text-xs text-slate-400">--</div>
+      <div class="mt-2 text-slate-600 text-xs">空頭條件 殖利率 &gt; 4.0%</div>
+      <div id="us10y-sig" class="text-xs font-semibold mt-1 text-slate-400">--</div>
+    </div>
+
+    <!-- M1b/M2 — auto-fetched from CBC -->
+    <div class="card p-4 ind-card" id="m1b-card">
+      <div class="flex items-center justify-between mb-1">
+        <span class="ticker">M1b/M2</span>
+        <span id="m1b-dot" class="w-2 h-2 rounded-full bg-slate-500"></span>
+      </div>
+      <div class="text-slate-400 text-xs">貨幣供給年增率 · CBC 央行</div>
+      <div id="m1b-status" class="text-xl font-bold text-white mt-1">--</div>
+      <div id="m1b-detail" class="text-xs text-slate-400 mb-1">--</div>
+      <div style="position:relative;height:48px"><canvas id="m1b-chart"></canvas></div>
+      <div class="mt-1 text-slate-600 text-xs">空頭條件: 死亡交叉 (M1b &lt; M2)</div>
+      <div id="m1b-sig" class="text-xs font-semibold mt-0.5 text-slate-500">--</div>
+      <div id="m1b-date" class="text-slate-600 text-xs mt-0.5"></div>
+    </div>
+
+    <!-- 外資 -->
+    <div class="card p-4 ind-card">
+      <div class="flex items-center justify-between mb-1">
+        <span class="ticker">外資</span>
+        <span id="foreign-dot" class="w-2 h-2 rounded-full bg-slate-500"></span>
+      </div>
+      <div class="text-slate-400 text-xs">外資近20日累計</div>
+      <div id="foreign-total" class="text-xl font-bold text-white mt-1">--</div>
+      <div id="foreign-latest" class="text-xs text-slate-400">--</div>
+      <div class="mt-2 text-slate-600 text-xs">空頭條件 &lt; -1,500億</div>
+      <div id="foreign-sig" class="text-xs font-semibold mt-1 text-slate-400">--</div>
+    </div>
+  </div>
+
+  <!-- ── 景氣燈號 + 外資棒圖 ── -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+
+    <!-- NDC 景氣燈號 -->
+    <div class="card p-5">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <div class="font-semibold text-white">景氣燈號</div>
+          <div class="text-slate-400 text-xs">國發會景氣循環指標 (資料源: index.ndc.gov.tw)</div>
+        </div>
+        <div id="ndc-light" class="ndc-circle bg-slate-700 text-2xl">?</div>
+      </div>
+      <div class="grid grid-cols-3 gap-3 mb-3">
+        <div><div class="text-slate-500 text-xs">燈號</div>
+             <div id="ndc-label" class="text-lg font-bold text-white">--</div></div>
+        <div><div class="text-slate-500 text-xs">分數</div>
+             <div id="ndc-score" class="text-lg font-bold text-white">--</div></div>
+        <div><div class="text-slate-500 text-xs">月份</div>
+             <div id="ndc-date" class="text-sm text-slate-300">--</div></div>
+      </div>
+      <div style="position:relative;height:110px"><canvas id="ndc-chart"></canvas></div>
+      <div class="flex justify-between mt-2 text-xs">
+        <span class="text-blue-400">藍(衰退≤16)</span>
+        <span class="text-yellow-300">黃藍(17-22)</span>
+        <span class="text-green-400">綠(23-31)</span>
+        <span class="text-orange-400">黃紅(32-37)</span>
+        <span class="text-red-400">紅(≥38)</span>
+      </div>
+    </div>
+
+    <!-- 外資日買賣超 -->
+    <div class="card p-5">
+      <div class="font-semibold text-white mb-0.5">外資日買賣超</div>
+      <div class="text-slate-400 text-xs mb-3">近20交易日（億元）· 資料源: FinMind</div>
+      <div style="position:relative;height:170px"><canvas id="foreign-chart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- ── Summary Table ── -->
+  <div class="card p-5 mb-5">
+    <div class="font-semibold text-white mb-4">空頭訊號總覽 · 15年回測基礎</div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-slate-500 border-b border-slate-800 text-left">
+            <th class="pb-2 pr-4 font-medium">指標</th>
+            <th class="pb-2 pr-4 font-medium">當前值</th>
+            <th class="pb-2 pr-4 font-medium">空頭條件</th>
+            <th class="pb-2 pr-6 font-medium text-center">訊號</th>
+            <th class="pb-2 font-medium">歷史驗證 / 說明</th>
+          </tr>
+        </thead>
+        <tbody id="summary-body" class="divide-y divide-slate-800/60"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <p class="text-center text-slate-700 text-xs pb-4">
+    資料源: Yahoo Finance · FinMind · 台灣國發會 (NDC) · 台灣央行 (CBC) ｜ 僅供參考，不構成投資建議
+  </p>
+</div>
+
+<script>
+const charts  = {};
+
+// ── Helpers ─────────────────────────────────────────────────────
+const C = { red:'#ef4444', green:'#22c55e', blue:'#3b82f6', orange:'#f97316', yellow:'#eab308', slate:'#475569' };
+
+function N(n, dec=2, sfx='') {
+  if (n === null || n === undefined) return '--';
+  return n.toLocaleString('zh-TW', {minimumFractionDigits:dec, maximumFractionDigits:dec}) + sfx;
+}
+function sign(n) { return n >= 0 ? '+' : ''; }
+function chgCls(v) { return v > 0 ? 'text-green-400' : v < 0 ? 'text-red-400' : 'text-slate-400'; }
+
+function dot(id, bearish) {
+  const el = document.getElementById(id);
+  if (el) el.className = 'w-2 h-2 rounded-full ' +
+    (bearish == null ? 'bg-slate-500' : bearish ? 'bg-red-500' : 'bg-green-500');
+}
+
+function badge(bearish, yes='空頭', no='多頭') {
+  if (bearish == null) return '<span class="text-slate-500 text-xs">N/A</span>';
+  return bearish
+    ? `<span class="px-2 py-0.5 rounded bg-red-900 text-red-300 text-xs">${yes}</span>`
+    : `<span class="px-2 py-0.5 rounded bg-green-900 text-green-300 text-xs">${no}</span>`;
+}
+
+function lineChart(id, labels, datasets, opts={}) {
+  const ctx = document.getElementById(id); if (!ctx) return;
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart(ctx, {
+    type: 'line', data: { labels, datasets },
+    options: {
+      responsive:true, maintainAspectRatio:false, animation:{duration:400},
+      plugins:{
+        legend:{ display:datasets.length>1, labels:{color:'#64748b',font:{size:10},boxWidth:14} },
+        tooltip:{ backgroundColor:'#0d1526', borderColor:'#1a2a42', borderWidth:1,
+                  titleColor:'#cbd5e1', bodyColor:'#94a3b8' }
+      },
+      scales:{
+        x:{ ticks:{color:'#374151',maxTicksLimit:7,font:{size:9}}, grid:{color:'#1a2a42'} },
+        y:{ ticks:{color:'#374151',font:{size:9}}, grid:{color:'#1a2a42'}, ...opts.y }
+      }
+    }
+  });
+}
+
+function barChart(id, labels, data, colors) {
+  const ctx = document.getElementById(id); if (!ctx) return;
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart(ctx, {
+    type:'bar', data:{ labels, datasets:[{data,backgroundColor:colors,borderRadius:2}] },
+    options:{
+      responsive:true, maintainAspectRatio:false, animation:{duration:300},
+      plugins:{ legend:{display:false}, tooltip:{backgroundColor:'#0d1526',borderColor:'#1a2a42',
+                borderWidth:1,bodyColor:'#94a3b8'} },
+      scales:{
+        x:{ ticks:{color:'#374151',font:{size:8},maxTicksLimit:10}, grid:{color:'#1a2a42'} },
+        y:{ ticks:{color:'#374151',font:{size:9}}, grid:{color:'#1a2a42'} }
+      }
+    }
+  });
+}
+
+// ── Updaters ────────────────────────────────────────────────────
+function updTWII(d) {
+  if (!d || d.error) return;
+  const b = d.bearish;
+  document.getElementById('twii-price').textContent = N(d.price, 0);
+  document.getElementById('twii-ma').textContent    = N(d.ma, 0);
+  const dev = document.getElementById('twii-dev');
+  dev.textContent = N(d.deviation, 2, '%');
+  dev.className   = 'text-3xl font-bold ' + (b ? 'text-red-400' : 'text-green-400');
+  const chg = document.getElementById('twii-chg');
+  chg.textContent = sign(d.chg_pct) + N(d.chg_pct, 2, '%');
+  chg.className   = 'text-xs mt-0.5 ' + chgCls(d.chg_pct);
+  document.getElementById('twii-slope').textContent = 'MA斜率 ' + sign(d.slope) + N(d.slope, 3, '%');
+  const bdg = document.getElementById('twii-badge');
+  bdg.textContent = b ? '▼ 空頭' : '▲ 多頭';
+  bdg.className   = 'px-3 py-1 rounded-full text-xs font-semibold ' +
+    (b ? 'bg-red-900 text-red-300 pulse-r' : 'bg-green-900 text-green-300');
+  if (d.chart?.length) {
+    lineChart('twii-chart', d.chart.map(p=>p.d.slice(5)), [
+      {label:'加權指數',data:d.chart.map(p=>p.c),borderColor:b?C.red:C.green,
+       backgroundColor:'transparent',borderWidth:1.5,pointRadius:0,tension:.1},
+      {label:'季線60MA',data:d.chart.map(p=>p.m),borderColor:C.blue,
+       backgroundColor:'transparent',borderWidth:1.5,pointRadius:0,tension:.1,borderDash:[4,2]}
+    ]);
+  }
+}
+
+function updSOX(d) {
+  if (!d || d.error) return;
+  const b = d.bearish;
+  document.getElementById('sox-price').textContent = N(d.price, 0);
+  document.getElementById('sox-ma').textContent    = N(d.ma, 0);
+  const dev = document.getElementById('sox-dev');
+  dev.textContent = N(d.deviation, 2, '%');
+  dev.className   = 'font-bold ' + (b ? 'text-red-400' : 'text-green-400');
+  const chg = document.getElementById('sox-chg');
+  chg.textContent = sign(d.chg_pct) + N(d.chg_pct, 2, '%');
+  chg.className   = 'text-xs ' + chgCls(d.chg_pct);
+  const bdg = document.getElementById('sox-badge');
+  bdg.textContent = b ? '▼ 空頭' : '▲ 多頭';
+  bdg.className   = 'px-2 py-0.5 rounded-full text-xs font-semibold ' +
+    (b ? 'bg-red-900 text-red-300' : 'bg-green-900 text-green-300');
+  if (d.chart?.length) {
+    const pts = d.chart.slice(-80);
+    lineChart('sox-chart', pts.map(p=>p.d.slice(5)), [
+      {data:pts.map(p=>p.c),borderColor:b?C.red:C.green,backgroundColor:'transparent',
+       borderWidth:1.5,pointRadius:0,tension:.1},
+      {data:pts.map(p=>p.m),borderColor:C.blue,backgroundColor:'transparent',
+       borderWidth:1,pointRadius:0,tension:.1,borderDash:[3,2]}
+    ]);
+  }
+}
+
+function updDXY(d) {
+  if (!d || d.error) return;
+  const b = d.price > 104;
+  document.getElementById('dxy-price').textContent = N(d.price, 2);
+  const chg = document.getElementById('dxy-chg');
+  chg.textContent = sign(d.chg_pct) + N(d.chg_pct, 2, '%');
+  chg.className   = 'text-xs ' + chgCls(d.chg_pct);
+  dot('dxy-dot', b);
+  const sig = document.getElementById('dxy-sig');
+  sig.textContent = b ? '▼ 強勢美元 (空頭)' : '▲ 弱勢美元 (中性)';
+  sig.className   = 'text-xs font-semibold mt-1 ' + (b ? 'text-red-400' : 'text-green-400');
+}
+
+function updUS10Y(d) {
+  if (!d || d.error) return;
+  const b = d.price > 4.0;
+  document.getElementById('us10y-price').textContent = N(d.price, 3, '%');
+  const chg = document.getElementById('us10y-chg');
+  chg.textContent = sign(d.chg_pct) + N(d.chg_pct, 2, '%');
+  chg.className   = 'text-xs ' + chgCls(d.chg_pct);
+  dot('us10y-dot', b);
+  const sig = document.getElementById('us10y-sig');
+  sig.textContent = b ? '▼ 高殖利率 (空頭)' : '▲ 低殖利率 (中性)';
+  sig.className   = 'text-xs font-semibold mt-1 ' + (b ? 'text-red-400' : 'text-green-400');
+}
+
+function renderM1b(data) {
+  const status = document.getElementById('m1b-status');
+  const detail = document.getElementById('m1b-detail');
+  const sig    = document.getElementById('m1b-sig');
+  const dateEl = document.getElementById('m1b-date');
+  if (!data) {
+    status.textContent = '載入中…';
+    status.className   = 'text-sm font-bold text-slate-400 mt-1';
+    detail.textContent = '自動從 CBC 央行取得';
+    dot('m1b-dot', null);
+    sig.textContent = '--'; sig.className = 'text-xs font-semibold mt-0.5 text-slate-500';
+    return;
+  }
+  const b = data.death_cross ?? data.bearish;
+  status.textContent = b ? '死亡交叉' : '黃金交叉';
+  status.className   = 'text-xl font-bold mt-1 ' + (b ? 'text-red-400' : 'text-green-400');
+  detail.textContent = `M1b: ${N(data.m1b_yoy,2,'%')}  M2: ${N(data.m2_yoy,2,'%')}`;
+  if (dateEl) dateEl.textContent = data.date ? `資料期間: ${data.date}` : '';
+  dot('m1b-dot', b);
+  sig.textContent = b ? '▼ 流動性收縮 (空頭)' : '▲ 流動性充裕 (多頭)';
+  sig.className   = 'text-xs font-semibold mt-0.5 ' + (b ? 'text-red-400' : 'text-green-400');
+
+  // Mini chart — M1b vs M2 YoY line
+  if (data.chart && data.chart.length) {
+    const labels = data.chart.map(r => r.ym.replace('M','/'));
+    const m1bArr = data.chart.map(r => r.m1b);
+    const m2Arr  = data.chart.map(r => r.m2);
+    if (charts.m1b) charts.m1b.destroy();
+    charts.m1b = new Chart(document.getElementById('m1b-chart'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          { label:'M1b%', data:m1bArr, borderColor:'#22d3ee', borderWidth:1.5,
+            pointRadius:0, tension:.3 },
+          { label:'M2%',  data:m2Arr,  borderColor:'#f59e0b', borderWidth:1.5,
+            pointRadius:0, tension:.3 },
+        ],
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        animation:{duration:0},
+        plugins:{ legend:{display:false}, tooltip:{enabled:false} },
+        scales:{
+          x:{ display:false },
+          y:{ display:false },
+        },
+      },
+    });
+  }
+}
+
+function updForeign(d) {
+  if (!d || d.error) { document.getElementById('foreign-total').textContent = '無法取得'; return; }
+  const b = d.bearish;
+  const tot = document.getElementById('foreign-total');
+  tot.textContent = sign(d.total_20d_yi) + N(d.total_20d_yi, 0, ' 億');
+  tot.className   = 'text-xl font-bold mt-1 ' + (b ? 'text-red-400' : 'text-green-400');
+  document.getElementById('foreign-latest').textContent =
+    `最新 ${d.latest_date}: ${sign(d.latest_yi)}${N(d.latest_yi,0)}億`;
+  dot('foreign-dot', b);
+  const sig = document.getElementById('foreign-sig');
+  sig.textContent = b ? '▼ 外資大幅流出 (空頭)' : '▲ 外資持續進場 (多頭)';
+  sig.className   = 'text-xs font-semibold mt-1 ' + (b ? 'text-red-400' : 'text-green-400');
+  if (d.daily?.length) {
+    const rev = [...d.daily].reverse();
+    barChart('foreign-chart',
+      rev.map(x => x.date.slice(5)),
+      rev.map(x => x.yi),
+      rev.map(x => x.yi >= 0 ? 'rgba(34,197,94,.55)' : 'rgba(239,68,68,.55)')
+    );
+  }
+}
+
+function updNDC(d) {
+  const light = document.getElementById('ndc-light');
+  const lbl   = document.getElementById('ndc-label');
+  if (!d || d.error) { lbl.textContent = '無法取得'; return; }
+
+  const palette = {
+    red:        { bg:'rgba(239,68,68,.15)',  bdr:'#ef4444', icon:'🔴', clr:'#f87171' },
+    yellow_red: { bg:'rgba(249,115,22,.15)', bdr:'#f97316', icon:'🟠', clr:'#fb923c' },
+    green:      { bg:'rgba(34,197,94,.15)',  bdr:'#22c55e', icon:'🟢', clr:'#4ade80' },
+    yellow:     { bg:'rgba(234,179,8,.15)',  bdr:'#eab308', icon:'🟡', clr:'#facc15' },
+    blue:       { bg:'rgba(59,130,246,.15)', bdr:'#3b82f6', icon:'🔵', clr:'#60a5fa' },
+    unknown:    { bg:'#1a2a42',             bdr:'#475569', icon:'⚪', clr:'#94a3b8' },
+  };
+  const p = palette[d.light] || palette.unknown;
+  light.style.background  = p.bg;
+  light.style.borderColor = p.bdr;
+  light.textContent       = p.icon;
+  lbl.textContent  = d.label || '--';
+  lbl.style.color  = p.clr;
+  document.getElementById('ndc-score').textContent = d.score ?? '--';
+  document.getElementById('ndc-date').textContent  = d.date  || '--';
+
+  if (d.history?.length) {
+    const scoreColors = d.history.map(x => {
+      const s = x.score;
+      if (s <= 16) return 'rgba(59,130,246,.7)';
+      if (s <= 22) return 'rgba(234,179,8,.7)';
+      if (s <= 31) return 'rgba(34,197,94,.7)';
+      if (s <= 37) return 'rgba(249,115,22,.7)';
+      return 'rgba(239,68,68,.7)';
+    });
+    lineChart('ndc-chart',
+      d.history.map(x => x.ym.slice(0,4)+'/'+ x.ym.slice(4)),
+      [{
+        data: d.history.map(x => x.score),
+        borderColor: '#94a3b8',
+        backgroundColor: 'transparent',
+        borderWidth: 1.5,
+        pointRadius: 3,
+        pointBackgroundColor: scoreColors,
+        tension: .3
+      }],
+      { y: { min: 10, max: 50,
+             ticks:{ color:'#374151', font:{size:8}, stepSize:5, callback:v=>v } } }
+    );
+  }
+}
+
+function updateSignalScore(data) {
+  if (!data) return;
+  const flags = [
+    data.twii?.bearish,
+    data.sox?.bearish,
+    data.dxy  ? data.dxy.price > 104   : null,
+    data.us10y? data.us10y.price > 4.0 : null,
+    data.m1b_m2?.bearish ?? null,
+    data.foreign?.bearish,
+    data.ndc?.bearish,
+  ];
+  const cnt = flags.filter(v => v === true).length;
+  const pct = cnt / 7 * 100;
+
+  document.getElementById('score-count').textContent = `${cnt}/7`;
+  const fill = document.getElementById('bar-fill');
+  fill.style.width = pct + '%';
+
+  let clr, label, icon;
+  if      (cnt >= 5) { clr='#ef4444'; label='⚠ 強烈空頭訊號 — 建議降低持倉'; icon='🔴'; }
+  else if (cnt >= 3) { clr='#f97316'; label='⚡ 中度空頭壓力 — 注意風險';     icon='🟠'; }
+  else if (cnt >= 2) { clr='#eab308'; label='⚑ 輕微空頭訊號 — 謹慎觀察';     icon='🟡'; }
+  else               { clr='#22c55e'; label='✓ 多頭環境 — 趨勢向好';           icon='🟢'; }
+
+  fill.style.background = clr;
+  const lbl = document.getElementById('score-label');
+  lbl.textContent = label; lbl.style.color = clr;
+  document.getElementById('score-icon').textContent = icon;
+}
+
+function updateSummary(data) {
+  if (!data) return;
+  const m1b = data.m1b_m2;
+  const rows = [
+    { name:'TWII 季線乖離率',    ticker:'^TWII', src:'Yahoo Finance',
+      val:  data.twii    ? N(data.twii.deviation,2,'%')           : '--',
+      cond: '< 0%',       bearish: data.twii?.bearish,
+      desc: '股價跌破季線，確認空頭排列，15年內最直接指標' },
+    { name:'SOX 季線乖離率',     ticker:'^SOX',  src:'Yahoo Finance',
+      val:  data.sox     ? N(data.sox.deviation,2,'%')            : '--',
+      cond: '< -5%',      bearish: data.sox?.bearish,
+      desc: '半導體領先台股約1個月，2022年先跌30%後台股隨之崩' },
+    { name:'美元指數 DXY',       ticker:'DXY',   src:'Yahoo Finance',
+      val:  data.dxy     ? N(data.dxy.price,2)                    : '--',
+      cond: '> 104',      bearish: data.dxy ? data.dxy.price>104 : null,
+      desc: '強美元→外資撤出新興市場，2022達114高峰時台股跌36%' },
+    { name:'美債10年殖利率',     ticker:'^TNX',  src:'Yahoo Finance',
+      val:  data.us10y   ? N(data.us10y.price,3,'%')              : '--',
+      cond: '> 4.0%',     bearish: data.us10y ? data.us10y.price>4.0 : null,
+      desc: '壓縮本益比估值，資金轉向無風險債券，2022年QT主因' },
+    { name:'M1b/M2 死亡交叉',   ticker:'CBC',   src:'CBC 央行統計',
+      val:  m1b ? (m1b.death_cross?'死亡交叉':'黃金交叉')        : '--',
+      cond: 'M1b<M2 年增率', bearish: m1b?.bearish ?? null,
+      desc: `15年最可靠指標，散戶資金退潮領先2-3個月 · M1b:${m1b?N(m1b.m1b_yoy,2,'%'):'--'} M2:${m1b?N(m1b.m2_yoy,2,'%'):'--'} (${m1b?.date||''})` },
+    { name:'外資20日買賣超',     ticker:'TWSE',  src:'FinMind',
+      val:  data.foreign ? N(data.foreign.total_20d_yi,0,'億')    : '--',
+      cond: '< -1,500億',  bearish: data.foreign?.bearish,
+      desc: '外資持續賣超→台幣貶值+流動性縮，形成負循環加速空頭' },
+    { name:'景氣燈號',           ticker:'NDC',   src:'國發會',
+      val:  data.ndc     ? (data.ndc.label + ' (' + data.ndc.score + ')') : '--',
+      cond: '黃藍/藍燈',   bearish: data.ndc?.bearish,
+      desc: '政府領先指標，黃藍燈超前景氣轉折2-4月 — 資料源: NDC' },
+  ];
+
+  document.getElementById('summary-body').innerHTML = rows.map(r => `
+    <tr class="hover:bg-slate-800/20 transition">
+      <td class="py-3 pr-4">
+        <div class="font-medium text-slate-200">${r.name}</div>
+        <div class="flex gap-2 mt-0.5">
+          <span class="text-xs text-slate-600">${r.ticker}</span>
+          <span class="text-xs text-slate-700">· ${r.src}</span>
+        </div>
+      </td>
+      <td class="py-3 pr-4">
+        <span class="font-mono ${r.bearish===true?'text-red-400':r.bearish===false?'text-green-400':'text-slate-400'}">${r.val}</span>
+      </td>
+      <td class="py-3 pr-4 text-xs text-slate-500">${r.cond}</td>
+      <td class="py-3 pr-6 text-center">${badge(r.bearish)}</td>
+      <td class="py-3 text-xs text-slate-500 max-w-xs">${r.desc}</td>
+    </tr>`).join('');
+}
+
+// ── Main ─────────────────────────────────────────────────────────
+let lastData = null;
+
+async function loadData(manual=false) {
+  if (manual) document.getElementById('update-time').textContent = '更新中…';
+  try {
+    const res = await fetch('/api/all');
+    const d   = await res.json();
+    lastData  = d;
+    updTWII(d.twii);
+    updSOX(d.sox);
+    updDXY(d.dxy);
+    updUS10Y(d.us10y);
+    renderM1b(d.m1b_m2);
+    updForeign(d.foreign);
+    updNDC(d.ndc);
+    updateSignalScore(d);
+    updateSummary(d);
+    document.getElementById('update-time').textContent = '更新: ' + (d.updated_at || '--');
+  } catch(e) {
+    console.error(e);
+    document.getElementById('update-time').textContent = '更新失敗，重試中…';
+  }
+}
+
+loadData();
+setInterval(loadData, 5 * 60 * 1000);
+</script>
+</body>
+</html>
