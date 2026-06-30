@@ -4,14 +4,13 @@
 import warnings
 warnings.filterwarnings("ignore", message="Unverified HTTPS request")
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 import yfinance as yf
 import pandas as pd
-import requests, re, time, os
+import requests, re, time, os, asyncio
 from datetime import datetime, timedelta
-
-app = FastAPI(title="台股空頭訊號監控")
 
 _cache: dict = {}
 HDR = {
@@ -229,6 +228,37 @@ def _m1b_m2():
         print(f"M1b/M2: {e}")
     return None
 
+
+# ─── Background auto-refresh ─────────────────────────────────────────────────
+
+def _refresh_all():
+    """Warm every cache bucket; called on startup and every 5 min."""
+    cached("twii",    300,  _yf_index, "^TWII",    "加權指數",   "1y",  60)
+    cached("sox",     300,  _yf_index, "^SOX",     "費城半導體", "1y",  60)
+    cached("dxy",     300,  _yf_index, "DX-Y.NYB", "美元指數",   "6mo", 20)
+    cached("us10y",   300,  _yf_index, "^TNX",     "美債10Y",   "6mo", 20)
+    cached("foreign", 1800, _finmind_foreign_flow)
+    cached("m1b_m2",  3600, _m1b_m2)
+    cached("ndc",     3600, _ndc_cycle)
+    print(f"[refresh] done at {datetime.now().strftime('%H:%M:%S')}")
+
+async def _scheduler():
+    """Run _refresh_all every 5 minutes in the background."""
+    while True:
+        await asyncio.sleep(300)
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _refresh_all)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Warm cache immediately on startup (non-blocking)
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, _refresh_all)
+    # Start background scheduler
+    asyncio.create_task(_scheduler())
+    yield
+
+app = FastAPI(title="台股空頭訊號監控", lifespan=lifespan)
 
 # ─── Routes ──────────────────────────────────────────────────────────────────
 
